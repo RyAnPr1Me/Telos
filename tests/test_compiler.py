@@ -296,3 +296,131 @@ class TestMachineCodeOutput:
                     f"{src}: {name} is {type(fn)}, expected NativeFunction"
                 )
                 assert callable(fn)
+
+
+# ---------------------------------------------------------------------------
+# C backend tests
+# ---------------------------------------------------------------------------
+
+from src.compiler import compile_telos_c, run_telos_c
+from src.codegen.c_gen import generate_c
+
+
+class TestCGenerator:
+    """Tests for the C source code generator."""
+
+    SRC_SUM = """
+    int sum(int n) {
+        int s = 0;
+        for (int i = 0; i < n; i++) {
+            s += i;
+        }
+        return s;
+    }
+    """
+
+    def test_c_source_is_string(self):
+        """compile_telos_c must return a dict of str values."""
+        result = compile_telos_c(self.SRC_SUM)
+        assert isinstance(result, dict)
+        assert "sum" in result
+        assert isinstance(result["sum"], str)
+
+    def test_c_source_contains_long_long(self):
+        """Generated C must use long long for 64-bit integers."""
+        result = compile_telos_c(self.SRC_SUM)
+        assert "long long" in result["sum"]
+
+    def test_c_source_is_not_python(self):
+        """Generated C must not contain Python-specific syntax."""
+        result = compile_telos_c(self.SRC_SUM)
+        src = result["sum"]
+        assert "def " not in src
+        assert "return" in src
+
+    def test_c_source_has_function_name(self):
+        """Generated C must contain the function name."""
+        result = compile_telos_c(self.SRC_SUM)
+        assert "sum" in result["sum"]
+
+
+class TestCBackendExecution:
+    """End-to-end tests: Telos → C source → gcc → real machine code."""
+
+    SRC_SUM = """
+    int sum(int n) {
+        int s = 0;
+        for (int i = 0; i < n; i++) {
+            s += i;
+        }
+        return s;
+    }
+    """
+
+    SRC_FIXED = """
+    int fixed_sum() {
+        int s = 0;
+        for (int i = 0; i < 10; i++) {
+            s += i;
+        }
+        return s;
+    }
+    """
+
+    SRC_ADD      = "int add(int a, int b) { return a + b; }"
+    SRC_IDENTITY = "int id(int x) { return x; }"
+
+    def test_sum_via_c(self):
+        """sum compiled via C backend must return correct values."""
+        fns = run_telos_c(self.SRC_SUM)
+        assert fns["sum"](0)  == 0
+        assert fns["sum"](1)  == 0
+        assert fns["sum"](5)  == 10
+        assert fns["sum"](10) == 45
+        n = 1000
+        assert fns["sum"](n) == n * (n - 1) // 2
+
+    def test_fixed_sum_via_c(self):
+        """Constant-folded function compiled via C returns 45."""
+        fns = run_telos_c(self.SRC_FIXED)
+        assert fns["fixed_sum"]() == 45
+
+    def test_add_via_c(self):
+        """Simple two-argument function works via C backend."""
+        fns = run_telos_c(self.SRC_ADD)
+        assert fns["add"](3, 4) == 7
+        assert fns["add"](-1, 1) == 0
+
+    def test_identity_via_c(self):
+        """Identity function works via C backend."""
+        fns = run_telos_c(self.SRC_IDENTITY)
+        assert fns["id"](42) == 42
+
+    def test_c_callables_are_callable(self):
+        """run_telos_c must return callable objects."""
+        fns = run_telos_c(self.SRC_SUM)
+        assert callable(fns["sum"])
+
+    def test_c_and_x86_agree(self):
+        """Both backends must produce identical results for all test inputs."""
+        src = self.SRC_SUM
+        x86_fns = run_telos(src)
+        c_fns   = run_telos_c(src)
+        for n in range(0, 20):
+            assert x86_fns["sum"](n) == c_fns["sum"](n), f"Mismatch at n={n}"
+
+    def test_sum_squares_via_c(self):
+        """Sum of squares compiled via C backend must return correct values."""
+        src = """
+        int sum_sq(int n) {
+            int s = 0;
+            for (int i = 0; i < n; i++) {
+                s += i * i;
+            }
+            return s;
+        }
+        """
+        fns = run_telos_c(src)
+        for n in range(0, 15):
+            expected = sum(i * i for i in range(n))
+            assert fns["sum_sq"](n) == expected, f"n={n}"

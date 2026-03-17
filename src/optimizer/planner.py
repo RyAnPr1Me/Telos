@@ -2,9 +2,21 @@
 
 Given a ``ConstraintGraph`` the planner:
 
-1. For each constraint node, generates a *set of candidate execution plans*.
-2. Evaluates the cost of each candidate using the cost model.
-3. Selects the cheapest valid plan.
+1. Builds a ``GoalGraph`` to determine which constraint nodes are *live*
+   (reachable backward from the ``ReturnConstraint``).
+2. For each live constraint node, generates a *set of candidate execution plans*.
+3. Evaluates the cost of each candidate using the cost model.
+4. Selects the cheapest valid plan.
+
+Goal-directed compilation
+-------------------------
+The ``GoalGraph`` is the central structure that drives this process.  It
+performs backward liveness analysis: starting from the return goal it traces
+which variables are needed, then finds the last constraint that writes each
+variable, and repeats.  Dead constraints (whose results are never used) are
+excluded from the plan entirely.  This eliminates redundant initialisations
+such as ``s = 0`` when the reduction that follows overwrites ``s`` with a
+closed-form formula or a loop that resets the accumulator itself.
 
 The key optimization is **algebraic closed-form detection** for additive
 reductions over polynomial bodies: loops of the form::
@@ -15,8 +27,9 @@ are replaced by O(1) formulas when ``f`` is a low-degree polynomial.
 
 Design notes
 ------------
-* This is NOT pass-based. Every constraint node is planned independently,
-  and the cheapest plan wins.
+* Goal-directed: only live constraints (per ``GoalGraph``) are planned.
+* This is NOT pass-based within each live node: every live constraint is
+  planned independently, and the cheapest plan wins.
 * Bounded search: polynomial analysis is limited to degree ≤ 3 to avoid
   exponential blowup.
 * Safe fallback: a LoopPlan is always generated; the closed-form is only
@@ -42,6 +55,7 @@ from ..ir.nodes import (
     ReturnConstraint,
 )
 from .cost_model import cheapest, plan_cost
+from .goal_graph import GoalGraph
 from .plans import (
     AssignPlan,
     ClosedFormPlan,
@@ -66,10 +80,17 @@ class Planner:
     """Generates and selects optimal execution plans for constraint graphs."""
 
     def plan_function(self, graph: ConstraintGraph) -> FunctionPlan:
-        """Return the optimal ``FunctionPlan`` for *graph*."""
-        fn_plan = FunctionPlan(name=graph.name, param_names=graph.params)
+        """Return the optimal ``FunctionPlan`` for *graph*.
 
-        for node in graph.constraints:
+        Uses the ``GoalGraph`` to perform backward liveness analysis first,
+        then plans only the live (reachable from the return goal) constraint
+        nodes.  Dead constraints — for example, ``s = 0`` when the reduction
+        that follows overwrites ``s`` entirely — are silently omitted.
+        """
+        fn_plan = FunctionPlan(name=graph.name, param_names=graph.params)
+        goal_graph = GoalGraph(graph)
+
+        for node in goal_graph.live_nodes():
             if isinstance(node, InvariantConstraint):
                 continue   # params are represented by function signature
 

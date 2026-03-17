@@ -196,7 +196,8 @@ int main(int argc, char **argv)
     fseek(fp, 0, SEEK_SET);
 
     char *source = malloc(len + 1);
-    fread(source, 1, len, fp);
+    size_t nread = fread(source, 1, len, fp);
+    (void)nread;
     source[len] = '\0';
     fclose(fp);
 

@@ -1,6 +1,6 @@
 CC      = gcc
-CFLAGS  = -std=c11 -Wall -Wextra -O2
-LDFLAGS =
+CFLAGS  = -std=c11 -D_GNU_SOURCE -Wall -Wextra -Wno-stringop-truncation -O2
+LDFLAGS = -lm
 
 SRCDIR  = .
 SRCS    = $(SRCDIR)/lexer.c \
@@ -37,7 +37,7 @@ test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRC) $(TEST_OBJS) telos.h
-	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(TEST_OBJS) $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(TEST_OBJS) $(LDFLAGS)
 
 clean:
 	rm -f $(OBJS) $(TARGET) $(TEST_BIN)

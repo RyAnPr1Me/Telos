@@ -1,0 +1,13 @@
+// sum.telos — sum of integers 0..n-1
+//
+// The compiler detects that `s += i` over the range [0, n) is an additive
+// reduction with a linear body.  It replaces the O(n) loop with the Gauss
+// closed-form formula: n * (n - 1) / 2
+
+int sum(int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) {
+        s += i;
+    }
+    return s;
+}

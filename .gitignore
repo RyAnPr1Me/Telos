@@ -25,3 +25,8 @@ build/
 .vscode/
 *.swp
 *.swo
+
+# C build artifacts
+csrc/*.o
+csrc/telos
+csrc/tests/test_telos

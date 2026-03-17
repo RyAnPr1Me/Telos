@@ -92,7 +92,21 @@ Function: fixed_sum  (40 bytes of x86-64 machine code)
 Telos/
 ├── spec/
 │   └── language.md          Language specification
-├── src/
+├── csrc/                    C implementation of the compiler
+│   ├── telos.h              Main header (all type definitions & API)
+│   ├── lexer.c              Tokenizer
+│   ├── parser.c             Recursive-descent parser
+│   ├── ir.c                 IR nodes, constraint graph, simplifier
+│   ├── lifting.c            AST → Constraint IR (pattern detection)
+│   ├── optimizer.c          Planner, cost model, goal graph
+│   ├── codegen_x86.c        x86-64 machine code generator
+│   ├── codegen_c.c          C source code generator
+│   ├── executable.c         mmap-based native function wrapper
+│   ├── compiler.c           Main entry point & CLI
+│   ├── Makefile              Build system
+│   └── tests/
+│       └── test_main.c      Comprehensive C test suite (45 tests)
+├── src/                     Python implementation (reference)
 │   ├── compiler.py          Main entry point (compile_telos / run_telos)
 │   ├── lexer.py             Tokenizer
 │   ├── parser.py            Recursive-descent parser
@@ -128,7 +142,36 @@ Telos/
 
 ## Quick Start
 
-### Requirements
+### C Implementation (Primary)
+
+#### Requirements
+
+* GCC (or any C11 compiler)
+* Linux/macOS (uses `mmap` with `PROT_EXEC` for native code execution)
+
+#### Build the compiler
+
+```bash
+cd csrc
+make
+```
+
+#### Run the compiler on an example
+
+```bash
+./csrc/telos examples/sum.telos
+```
+
+#### Run the C test suite
+
+```bash
+cd csrc
+make test
+```
+
+### Python Implementation (Reference)
+
+#### Requirements
 
 * Python 3.9+
 * `pytest` (for tests)
@@ -137,13 +180,13 @@ Telos/
 pip install pytest
 ```
 
-### Run the compiler on an example
+#### Run the compiler on an example
 
 ```bash
 python -m src.compiler examples/sum.telos
 ```
 
-### Use as a library
+#### Use as a library
 
 ```python
 from src.compiler import compile_telos, run_telos
@@ -167,7 +210,7 @@ funcs = run_telos(source)
 print(funcs["sum"](100))   # → 4950  (executed as native machine code)
 ```
 
-### Run the test suite
+#### Run the Python test suite
 
 ```bash
 python -m pytest tests/ -v
@@ -358,6 +401,29 @@ int add(int a, int b) {
 ---
 
 ## Running the Examples
+
+### C compiler
+
+```bash
+cd csrc && make   # build first
+
+# Sum of integers (closed-form Gauss formula)
+./csrc/telos examples/sum.telos
+
+# Sum of squares (closed-form n*(n-1)*(2n-1)/6)
+./csrc/telos examples/sum_sq.telos
+
+# All-constant loop (literal 45)
+./csrc/telos examples/fixed_sum.telos
+
+# Linear combination Σ(2i+3)
+./csrc/telos examples/linear_combo.telos
+
+# Multiple functions in one file
+./csrc/telos examples/multi_fn.telos
+```
+
+### Python compiler (reference)
 
 ```bash
 # Sum of integers (closed-form Gauss formula)

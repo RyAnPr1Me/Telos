@@ -185,6 +185,11 @@ class GoalGraph:
             self._compute_liveness()
         return [n for n in self._graph.constraints if n.node_id in self._live_ids]
 
+    @property
+    def constraints(self) -> List[ConstraintNode]:
+        """All constraint nodes in the underlying graph (in program order)."""
+        return self._graph.constraints
+
     def is_live(self, node: ConstraintNode) -> bool:
         """Return ``True`` if *node* is live."""
         if self._live_ids is None:

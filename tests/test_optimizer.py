@@ -233,11 +233,11 @@ from src.ir.nodes import (
 def goal_graph(src: str, fn_name: str = None) -> GoalGraph:
     """Full pipeline: parse → lift → GoalGraph."""
     prog = parse(src)
-    graphs = lift_program(prog)
+    constraint_graphs = lift_program(prog)
     if fn_name is None:
-        graph = next(iter(graphs.values()))
+        graph = next(iter(constraint_graphs.values()))
     else:
-        graph = graphs[fn_name]
+        graph = constraint_graphs[fn_name]
     return GoalGraph(graph)
 
 
@@ -255,9 +255,8 @@ class TestGoalGraph:
     def test_dead_init_eliminated(self):
         """s = 0 is dead when the reduction overwrites s without reading it."""
         gg = goal_graph(self.SRC_SUM)
-        live = gg.live_nodes()
         dead_assigns = [
-            n for n in gg._graph.constraints
+            n for n in gg.constraints
             if isinstance(n, AssignConstraint) and n.var == 's'
             and not gg.is_live(n)
         ]
@@ -295,7 +294,7 @@ class TestGoalGraph:
         """
         gg = goal_graph(src)
         x_node = next(
-            n for n in gg._graph.constraints
+            n for n in gg.constraints
             if isinstance(n, AssignConstraint) and n.var == 'x'
         )
         assert not gg.is_live(x_node), "x = n*2 is never used, should be dead"
@@ -311,7 +310,7 @@ class TestGoalGraph:
         """
         gg = goal_graph(src)
         x_node = next(
-            n for n in gg._graph.constraints
+            n for n in gg.constraints
             if isinstance(n, AssignConstraint) and n.var == 'x'
         )
         assert gg.is_live(x_node), "x = n*2 feeds y which is returned, so it's live"
@@ -328,7 +327,7 @@ class TestGoalGraph:
         """
         gg = goal_graph(src)
         x_node = next(
-            n for n in gg._graph.constraints
+            n for n in gg.constraints
             if isinstance(n, AssignConstraint) and n.var == 'x'
         )
         assert gg.is_live(x_node), "x is used in the reduction body, must be live"

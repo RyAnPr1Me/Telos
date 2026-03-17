@@ -1,0 +1,12 @@
+// sum_sq.telos — sum of squares 0² + 1² + … + (n-1)²
+//
+// The body i*i is a degree-2 polynomial in i.
+// The compiler applies: Σ i² = n*(n-1)*(2n-1) / 6
+
+int sum_sq(int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) {
+        s += i * i;
+    }
+    return s;
+}

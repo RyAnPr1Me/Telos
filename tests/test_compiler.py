@@ -1,7 +1,8 @@
 """End-to-end compiler tests.
 
-These tests compile Telos source to Python, execute the generated code,
-and verify that the output matches the expected mathematical results.
+These tests compile Telos source to native x86-64 machine code, execute
+the resulting functions, and verify that the output matches the expected
+mathematical results.
 
 They are the primary correctness guarantee: regardless of which
 optimization plan is chosen, the observable output must be identical.
@@ -9,6 +10,7 @@ optimization plan is chosen, the observable output must be identical.
 
 import pytest
 from src.compiler import compile_telos, run_telos
+from src.codegen.executable import NativeFunction
 
 
 # ---------------------------------------------------------------------------
@@ -16,7 +18,7 @@ from src.compiler import compile_telos, run_telos
 # ---------------------------------------------------------------------------
 
 def run(src: str) -> dict:
-    """Compile and run *src*, returning the namespace dict."""
+    """Compile and run *src*, returning native function callables."""
     return run_telos(src)
 
 
@@ -54,12 +56,13 @@ class TestSum:
         n = 1000
         assert self.ns["sum"](n) == n * (n - 1) // 2
 
-    def test_compiled_source_contains_formula(self):
-        """The optimized output should NOT contain a for-loop (closed form used)."""
-        py_src = compile_telos(self.SRC)
-        assert "for " not in py_src, (
-            "Expected closed-form formula, found a loop:\n" + py_src
-        )
+    def test_emits_machine_code_not_python(self):
+        """compile_telos must return bytes, not a Python source string."""
+        mc = compile_telos(self.SRC)
+        assert isinstance(mc, dict)
+        assert "sum" in mc
+        assert isinstance(mc["sum"], bytes)
+        assert len(mc["sum"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +116,10 @@ class TestConstantFolding:
     def test_correct_value(self):
         assert self.ns["fixed_sum"]() == 45
 
-    def test_compiled_is_constant(self):
-        """The optimized output should be a literal 45."""
-        py_src = compile_telos(self.SRC)
-        assert "45" in py_src
-        assert "for " not in py_src
+    def test_emits_machine_code(self):
+        mc = compile_telos(self.SRC)
+        assert isinstance(mc["fixed_sum"], bytes)
+        assert len(mc["fixed_sum"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +222,11 @@ class TestMultipleFunctions:
         n = 10
         assert self.ns["b"](n) == sum(i * i for i in range(n))
 
+    def test_both_functions_compiled(self):
+        mc = compile_telos(self.SRC)
+        assert "a" in mc and "b" in mc
+        assert isinstance(mc["a"], bytes) and isinstance(mc["b"], bytes)
+
 
 # ---------------------------------------------------------------------------
 # Simple function (no loops)
@@ -238,12 +245,20 @@ class TestSimpleFunction:
         ns = run("int answer() { return 42; }")
         assert ns["answer"]() == 42
 
+    def test_subtract(self):
+        ns = run("int sub(int a, int b) { return a - b; }")
+        assert ns["sub"](10, 3) == 7
+
+    def test_multiply(self):
+        ns = run("int mul(int a, int b) { return a * b; }")
+        assert ns["mul"](6, 7) == 42
+
 
 # ---------------------------------------------------------------------------
-# Regression: generated code must be syntactically valid Python
+# Machine code output validation
 # ---------------------------------------------------------------------------
 
-class TestCodeValidity:
+class TestMachineCodeOutput:
     PROGRAMS = [
         "int sum(int n) { int s = 0; for (int i = 0; i < n; i++) { s += i; } return s; }",
         "int sum_sq(int n) { int s = 0; for (int i = 0; i < n; i++) { s += i * i; } return s; }",
@@ -251,10 +266,33 @@ class TestCodeValidity:
         "int f(int a, int b) { return a + b; }",
     ]
 
-    def test_all_compile_to_valid_python(self):
+    def test_all_compile_to_bytes(self):
+        """compile_telos must produce non-empty bytes for every function."""
         for src in self.PROGRAMS:
-            py_src = compile_telos(src)
-            try:
-                compile(py_src, "<telos>", "exec")
-            except SyntaxError as e:
-                pytest.fail(f"Invalid Python generated for:\n{src}\n\n{py_src}\n{e}")
+            mc = compile_telos(src)
+            for name, code in mc.items():
+                assert isinstance(code, bytes), (
+                    f"{src}: expected bytes, got {type(code)}"
+                )
+                assert len(code) > 0, f"{src}: {name} produced empty code"
+
+    def test_output_is_not_python_source(self):
+        """The compiler must NOT emit Python source strings."""
+        for src in self.PROGRAMS:
+            mc = compile_telos(src)
+            assert isinstance(mc, dict), "compile_telos must return a dict"
+            # None of the values should be strings
+            for name, code in mc.items():
+                assert not isinstance(code, str), (
+                    f"{src}: {name} returned a Python string, expected bytes"
+                )
+
+    def test_native_functions_are_callable(self):
+        """run_telos must return NativeFunction instances."""
+        for src in self.PROGRAMS:
+            funcs = run_telos(src)
+            for name, fn in funcs.items():
+                assert isinstance(fn, NativeFunction), (
+                    f"{src}: {name} is {type(fn)}, expected NativeFunction"
+                )
+                assert callable(fn)

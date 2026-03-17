@@ -31,7 +31,7 @@ Candidate Plans   (loop / closed-form formula / compile-time constant)
 Optimal Plan      ←─── "fastest valid strategy"
     │  code generation
     ▼
-Executable Python
+x86-64 Machine Code  ←─── native binary, executed directly
 ```
 
 ---
@@ -50,14 +50,18 @@ int sum(int n) {
 }
 ```
 
-Generated Python (O(1) instead of O(n)):
+Generated x86-64 machine code (O(1) instead of O(n)):
 
-```python
-def sum(n):
-    s = 0
-    s = ((n * (n - 1)) // 2)  # Closed-form sum of degree-1 polynomial
-    return s
 ```
+Function: sum  (83 bytes of x86-64 machine code)
+  0000  55 48 89 e5 48 83 ec 10 48 89 7d f8 48 c7 c0 00
+  0010  00 00 00 48 89 45 f0 48 8b 45 f8 50 48 8b 45 f8
+  ...
+```
+
+The optimizer selects the Gauss closed-form formula `n*(n-1)/2` and the
+x86-64 code generator emits the arithmetic directly as native machine
+instructions — no interpreter, no Python runtime.
 
 Compile-time constant example:
 
@@ -71,13 +75,13 @@ int fixed_sum() {
 }
 ```
 
-Generated Python (constant literal):
+Generated x86-64 machine code (compile-time constant folded to `mov rax, 45`):
 
-```python
-def fixed_sum():
-    s = 0
-    s = 45  # compile-time constant
-    return s
+```
+Function: fixed_sum  (40 bytes of x86-64 machine code)
+  0000  55 48 89 e5 48 83 ec 10 48 c7 c0 00 00 00 00 48
+  0010  89 45 f8 48 c7 c0 2d 00 00 00 48 89 45 f8 48 8b
+  0020  45 f8 48 83 c4 10 5d c3
 ```
 
 ---
@@ -104,7 +108,8 @@ Telos/
 │   │   ├── cost_model.py    Cost scoring
 │   │   └── planner.py       Plan generation & selection
 │   └── codegen/
-│       └── python_gen.py    Python source code generator
+│       ├── x86_64_gen.py    x86-64 machine code generator
+│       └── executable.py    Wraps machine code bytes in a ctypes callable
 ├── tests/
 │   ├── test_lexer.py
 │   ├── test_parser.py
@@ -153,12 +158,13 @@ int sum(int n) {
 }
 """
 
-# Inspect the generated Python
-print(compile_telos(source))
+# Compile: returns {function_name: x86-64_machine_code_bytes}
+machine_code = compile_telos(source)
+print(machine_code["sum"].hex())   # raw bytes, e.g. "5548...c3"
 
-# Or compile and call directly
+# Or compile and call directly via native execution
 funcs = run_telos(source)
-print(funcs["sum"](100))   # → 4950
+print(funcs["sum"](100))   # → 4950  (executed as native machine code)
 ```
 
 ### Run the test suite
@@ -266,12 +272,31 @@ All formulas are applied after a **shift** so they work for any
 constants and the iteration count is ≤ 10,000, the reduction is
 evaluated entirely at compile time.
 
-### 7. Code Generator (`src/codegen/python_gen.py`)
+### 7. x86-64 Code Generator (`src/codegen/x86_64_gen.py`)
 
-Translates the chosen `FunctionPlan` to Python source.  All IR expressions
-are passed through the **simplifier** (`src/ir/simplify.py`) first to
-eliminate trivial sub-expressions (`x - 0 → x`, `x * 1 → x`, constant
-folding, etc.).
+Translates the chosen `FunctionPlan` directly into **x86-64 machine code bytes**
+using the System V AMD64 ABI (Linux/macOS).
+
+Key techniques:
+* All IR expressions are simplified first (`src/ir/simplify.py`).
+* A pre-scan allocates stack slots (8 bytes each, RBP-relative) for every variable.
+* Expression evaluation uses a software stack: left operand is saved with `PUSH RAX`,
+  right operand is evaluated into RAX, then `POP RCX` restores the left.
+* Integer division uses `XCHG RAX,RCX` + `CQO` + `IDIV RCX` (signed).
+* The `LoopPlan` fallback emits a full compare-and-branch loop with forward jumps
+  patched after the loop body is emitted.
+
+### 8. Executable Wrapper (`src/codegen/executable.py`)
+
+The machine code bytes are copied into a read/write/execute memory region
+(allocated via `mmap` with `PROT_READ|PROT_WRITE|PROT_EXEC`) and wrapped in a
+`ctypes.CFUNCTYPE` pointer.  The resulting `NativeFunction` object is a normal
+Python callable that runs at native speed.
+
+```python
+fn = NativeFunction(code_bytes, n_params=1)
+result = fn(100)   # executes native x86-64 code, returns Python int
+```
 
 ---
 

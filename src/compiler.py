@@ -16,11 +16,11 @@ As a library::
     }
     '''
 
-    # Compile and get the generated Python source
-    source = compile_telos(code)
-    print(source)
+    # Compile: returns {function_name: machine_code_bytes}
+    machine_code = compile_telos(code)
+    print(machine_code["sum"].hex())
 
-    # Or compile and immediately execute
+    # Or compile and immediately execute via native machine code
     funcs = run_telos(code)
     print(funcs['sum'](100))   # → 4950
 
@@ -38,16 +38,20 @@ Architecture overview
 4. **Planner / optimizer** (``src.optimizer.planner``) – for each constraint
    node it generates candidate execution plans (loop, closed-form formula,
    compile-time constant) and selects the cheapest valid one.
-5. **Code generator** (``src.codegen.python_gen``) – emits clean Python
-   source from the chosen plans.
+5. **x86-64 code generator** (``src.codegen.x86_64_gen``) – emits native
+   x86-64 machine code bytes from the chosen plans.
+6. **Executable wrapper** (``src.codegen.executable``) – maps the machine
+   code bytes into read/write/execute memory and wraps them in a ctypes
+   callable.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
-from .codegen.python_gen import generate_python, PythonGenerator
+from .codegen.executable import NativeFunction
+from .codegen.x86_64_gen import X86_64Generator
 from .lifting.semantic_lift import lift_program
 from .optimizer.planner import Planner
 from .parser import parse
@@ -57,8 +61,8 @@ from .parser import parse
 # Public API
 # ---------------------------------------------------------------------------
 
-def compile_telos(source: str) -> str:
-    """Compile Telos *source* to a Python source string.
+def compile_telos(source: str) -> Dict[str, bytes]:
+    """Compile Telos *source* to x86-64 machine code.
 
     Parameters
     ----------
@@ -67,65 +71,65 @@ def compile_telos(source: str) -> str:
 
     Returns
     -------
-    str
-        Python source code that defines equivalent functions.
+    dict
+        Maps each function name to its raw x86-64 machine code bytes.
     """
     program = parse(source)
     graphs = lift_program(program)
     planner = Planner()
-    gen = PythonGenerator()
+    gen = X86_64Generator()
 
-    parts = []
+    result: Dict[str, bytes] = {}
     for name, graph in graphs.items():
         plan = planner.plan_function(graph)
-        parts.append(gen.generate(plan))
+        result[name] = gen.generate(plan)
 
-    return "\n".join(parts)
+    return result
 
 
 def run_telos(
     source: str,
-    globals_dict: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Callable]:
-    """Compile and execute Telos *source*, returning all defined functions.
+    """Compile Telos *source* and return native callables.
+
+    Each returned function is backed by x86-64 machine code loaded into
+    executable memory.  It accepts and returns 64-bit signed integers.
 
     Parameters
     ----------
     source:
         Telos source code.
-    globals_dict:
-        Optional namespace to use.  If omitted, a fresh dict is used.
 
     Returns
     -------
     dict
-        Maps each function name to the compiled Python callable.
+        Maps each function name to a :class:`NativeFunction` callable.
     """
-    python_src = compile_telos(source)
-    ns: Dict[str, Any] = globals_dict if globals_dict is not None else {}
-    exec(python_src, ns)  # noqa: S102
-
     program = parse(source)
-    return {fn.name: ns[fn.name] for fn in program.functions}
+    machine_code = compile_telos(source)
+
+    funcs: Dict[str, Callable] = {}
+    for fn in program.functions:
+        n_params = len(fn.params)
+        code = machine_code[fn.name]
+        funcs[fn.name] = NativeFunction(code, n_params)
+
+    return funcs
 
 
 def compile_and_show(source: str) -> None:
-    """Compile *source* and print the generated Python code with a header."""
-    python_src = compile_telos(source)
-    print("=" * 60)
-    print("Generated Python:")
-    print("=" * 60)
-    print(python_src)
-
-
-# ---------------------------------------------------------------------------
-# Optional type import (Python 3.9 compat)
-# ---------------------------------------------------------------------------
-
-try:
-    from typing import Optional
-except ImportError:
-    Optional = None  # type: ignore
+    """Compile *source* and print a hex dump of each function's machine code."""
+    machine_code = compile_telos(source)
+    for name, code in machine_code.items():
+        print("=" * 60)
+        print(f"Function: {name}  ({len(code)} bytes of x86-64 machine code)")
+        print("=" * 60)
+        # Print hex dump: 16 bytes per line
+        for i in range(0, len(code), 16):
+            chunk = code[i : i + 16]
+            hex_part = " ".join(f"{b:02x}" for b in chunk)
+            print(f"  {i:04x}  {hex_part}")
+        print()
 
 
 # ---------------------------------------------------------------------------
